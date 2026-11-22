@@ -1,5 +1,9 @@
 # Travel Memory
 
+## AWS deployment assignment
+
+See [AWS_DEPLOYMENT.md](./AWS_DEPLOYMENT.md) for the current deployment status and the step-by-step EC2, load-balancing, Cloudflare, evidence, and submission guide. The target architecture is available as [travelmemory-aws-architecture.drawio](./docs/travelmemory-aws-architecture.drawio).
+
 `.env` file to work with the backend after creating a database in mongodb (see `backend/.env.example`):
 
 ```
