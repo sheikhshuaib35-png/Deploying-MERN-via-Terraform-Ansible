@@ -1,0 +1,364 @@
+PS D:\HV\Assessment\Deploying MERN via Terraform-Ansible---
+- name: Install and secure MongoDB on the private database instance
+  hosts: database
+  become: true
+  vars_files:
+    - group_vars/all/vault.yml
+  tasks:
+    - name: Install MongoDB repository prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - gnupg
+          - python3-pymongo
+        state: present
+        update_cache: true
+
+    - name: Download MongoDB package signing key
+      ansible.builtin.get_url:
+        url: "https://pgp.mongodb.com/server-{{ mongo_version }}.asc"
+        dest: "/usr/share/keyrings/mongodb-server-{{ mongo_version }}.asc"
+        mode: "0644"
+
+    - name: Convert MongoDB signing key to a keyring
+      ansible.builtin.command:
+        cmd: "gpg --dearmor --output /usr/share/keyrings/mongodb-server-{{ mongo_version }}.gpg /usr/share/keyrings/mongodb-server-{{ mongo_version }}.asc"
+        creates: "/usr/share/keyrings/mongodb-server-{{ mongo_version }}.gpg"
+
+    - name: Configure the official MongoDB package repository
+      ansible.builtin.apt_repository:
+        repo: "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-{{ mongo_version }}.gpg ] https://repo.mongodb.org/apt/ubuntu {{ ansible_distribution_release }}/mongodb-org/{{ mongo_version }} multiverse"
+        filename: "mongodb-org-{{ mongo_version }}"
+        state: present
+        update_cache: true
+
+    - name: Install MongoDB server
+      ansible.builtin.apt:
+        name: mongodb-org
+        state: present
+        update_cache: true
+
+    - name: Start MongoDB for initial local administrator creation
+      ansible.builtin.service:
+        name: mongod
+        state: started
+        enabled: true
+
+    - name: Create the MongoDB administrator account
+      community.mongodb.mongodb_user:
+        login_host: 127.0.0.1
+        login_port: 27017
+        database: admin
+        name: "{{ mongo_admin_username }}"
+        password: "{{ mongo_admin_password }}"
+        roles:
+          - db: admin
+            role: root
+        state: present
+        update_password: always
+      no_log: true
+
+    - name: Configure MongoDB private bind address and authorization
+      ansible.builtin.template:
+        src: templates/mongod.conf.j2
+        dest: /etc/mongod.conf
+        owner: root
+        group: root
+        mode: "0640"
+      notify: Restart MongoDB
+
+    - name: Apply MongoDB configuration before creating the application user
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for MongoDB after enabling authorization
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 27017
+        timeout: 60
+
+    - name: Create the least-privilege application database user
+      community.mongodb.mongodb_user:
+        login_host: 127.0.0.1
+        login_port: 27017
+        login_database: admin
+        login_user: "{{ mongo_admin_username }}"
+        login_password: "{{ mongo_admin_password }}"
+        database: "{{ mongo_database_name }}"
+        name: "{{ mongo_app_username }}"
+        password: "{{ mongo_app_password }}"
+        roles:
+          - db: "{{ mongo_database_name }}"
+            role: readWrite
+        state: present
+        update_password: always
+      no_log: true
+
+    - name: Disable SSH password and root logins on the database host
+      ansible.builtin.copy:
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PubkeyAuthentication yes
+        dest: /etc/ssh/sshd_config.d/60-travelmemory-hardening.conf
+        owner: root
+        group: root
+        mode: "0644"
+      register: database_sshd_hardening
+
+    - name: Validate database SSH configuration
+      ansible.builtin.command:
+        cmd: sshd -t
+      when: database_sshd_hardening.changed
+      changed_when: false
+
+    - name: Restart SSH after database hardening
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+      when: database_sshd_hardening.changed
+
+  handlers:
+    - name: Restart MongoDB
+      ansible.builtin.service:
+        name: mongod
+        state: restarted
+
+- name: Deploy the MERN application on the public web instance
+  hosts: web
+  become: true
+  vars_files:
+    - group_vars/all/vault.yml
+  tasks:
+    - name: Validate deployment inputs
+      ansible.builtin.assert:
+        that:
+          - app_public_url is match('^https?://[^/]+$')
+          - mongo_private_ip is match('^[0-9.]+$')
+        fail_msg: "Set app_public_url to the browser origin and ensure the database host resolves to its private IPv4 address."
+
+    - name: Install web deployment prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - nginx
+        state: present
+        update_cache: true
+
+    - name: Download the NodeSource setup script
+      ansible.builtin.get_url:
+        url: "https://deb.nodesource.com/setup_{{ node_major_version }}.x"
+        dest: "/tmp/nodesource_setup_{{ node_major_version }}.x"
+        mode: "0755"
+
+    - name: Configure the NodeSource repository
+      ansible.builtin.command:
+        cmd: "bash /tmp/nodesource_setup_{{ node_major_version }}.x"
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Install Node.js and npm
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+    - name: Install PM2
+      ansible.builtin.command:
+        cmd: npm install --global pm2
+        creates: /usr/bin/pm2
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_install_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Clone the MERN application repository
+      ansible.builtin.git:
+        repo: "{{ app_repo_url }}"
+        dest: "{{ app_install_dir }}"
+        version: "{{ app_repo_version }}"
+      become_user: ubuntu
+
+    - name: Install backend dependencies from the lock file
+      ansible.builtin.command:
+        cmd: npm ci
+        chdir: "{{ app_install_dir }}/backend"
+      become_user: ubuntu
+
+    - name: Configure the backend environment
+      ansible.builtin.template:
+        src: templates/backend.env.j2
+        dest: "{{ app_install_dir }}/backend/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+      no_log: true
+
+    - name: Ensure the backend upload directory exists
+      ansible.builtin.file:
+        path: "{{ app_install_dir }}/backend/uploads"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0750"
+
+    - name: Configure frontend API path for the same-origin Nginx proxy
+      ansible.builtin.copy:
+        content: "REACT_APP_BACKEND_URL=/api\n"
+        dest: "{{ app_install_dir }}/frontend/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: Install frontend dependencies from the lock file
+      ansible.builtin.command:
+        cmd: npm ci
+        chdir: "{{ app_install_dir }}/frontend"
+      become_user: ubuntu
+
+    - name: Build the React frontend
+      ansible.builtin.command:
+        cmd: npm run build
+        chdir: "{{ app_install_dir }}/frontend"
+      become_user: ubuntu
+
+    - name: Create the Nginx document root
+      ansible.builtin.file:
+        path: /var/www/travelmemory
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Publish the React build
+      ansible.builtin.copy:
+        src: "{{ app_install_dir }}/frontend/build/"
+        dest: /var/www/travelmemory/
+        remote_src: true
+        owner: www-data
+        group: www-data
+        mode: preserve
+
+    - name: Configure Nginx for the React app and Express API
+      ansible.builtin.template:
+        src: templates/travelmemory.nginx.conf.j2
+        dest: /etc/nginx/sites-available/travelmemory
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Enable the TravelMemory Nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/travelmemory
+        dest: /etc/nginx/sites-enabled/travelmemory
+        state: link
+
+    - name: Disable the default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Enable and start Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Validate the Nginx configuration
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+
+    - name: Reload Nginx with the TravelMemory site configuration
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+
+    - name: Check whether the PM2 application already exists
+      ansible.builtin.command:
+        cmd: pm2 describe travelmemory-api
+      become_user: ubuntu
+      register: pm2_process
+      changed_when: false
+      failed_when: false
+
+    - name: Start the backend with PM2
+      ansible.builtin.command:
+        cmd: "pm2 start index.js --name travelmemory-api --cwd {{ app_install_dir }}/backend"
+      become_user: ubuntu
+      when: pm2_process.rc != 0
+
+    - name: Restart the backend with PM2
+      ansible.builtin.command:
+        cmd: pm2 restart travelmemory-api
+      become_user: ubuntu
+      when: pm2_process.rc == 0
+
+    - name: Configure PM2 to start on system boot
+      ansible.builtin.command:
+        cmd: pm2 startup systemd -u ubuntu --hp /home/ubuntu
+      environment:
+        PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      args:
+        creates: /etc/systemd/system/pm2-ubuntu.service
+
+    - name: Save the PM2 process list for reboot
+      ansible.builtin.command:
+        cmd: pm2 save
+      become_user: ubuntu
+
+    - name: Wait for the backend health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/health"
+        status_code: 200
+      register: backend_health
+      retries: 12
+      delay: 5
+      until: backend_health.status == 200
+
+    - name: Check the application through Nginx
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/health
+        return_content: true
+        status_code: 200
+      register: proxied_health
+      retries: 12
+      delay: 5
+      until: proxied_health.status == 200
+
+    - name: Confirm MongoDB is healthy through Nginx
+      ansible.builtin.assert:
+        that:
+          - proxied_health.json.status == "ok"
+          - proxied_health.json.db == "connected"
+        fail_msg: "The API responded, but reports MongoDB as unavailable."
+
+    - name: Disable SSH password and root logins on the web host
+      ansible.builtin.copy:
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PubkeyAuthentication yes
+        dest: /etc/ssh/sshd_config.d/60-travelmemory-hardening.conf
+        owner: root
+        group: root
+        mode: "0644"
+      register: web_sshd_hardening
+
+    - name: Validate web SSH configuration
+      ansible.builtin.command:
+        cmd: sshd -t
+      when: web_sshd_hardening.changed
+      changed_when: false
+
+    - name: Restart SSH after web hardening
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
+      when: web_sshd_hardening.changed

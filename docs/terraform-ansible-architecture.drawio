@@ -1,0 +1,64 @@
+<mxfile host="app.diagrams.net" modified="2026-11-22T15:00:00.000Z" agent="Copilot" version="24.7.17">
+  <diagram id="travelmemory-terraform-ansible" name="Terraform Ansible AWS Deployment">
+    <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="TravelMemory - Terraform and Ansible Deployment" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=22;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="20" width="820" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="client" value="Administrator&#xa;WSL control machine&#xa;Terraform + Ansible + AWS CLI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="30" y="190" width="230" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="browser" value="Application users&#xa;Web browser" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="30" y="510" width="230" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="vpc" value="AWS VPC 10.40.0.0/16" style="swimlane;html=1;rounded=1;startSize=34;horizontal=0;fillColor=#f5f5f5;strokeColor=#666666;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="100" width="1130" height="680" as="geometry"/>
+        </mxCell>
+        <mxCell id="public" value="Public subnet 10.40.1.0/24" style="swimlane;html=1;rounded=1;startSize=30;horizontal=0;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;" vertex="1" parent="vpc">
+          <mxGeometry x="35" y="65" width="480" height="500" as="geometry"/>
+        </mxCell>
+        <mxCell id="private" value="Private subnet 10.40.2.0/24" style="swimlane;html=1;rounded=1;startSize=30;horizontal=0;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;" vertex="1" parent="vpc">
+          <mxGeometry x="590" y="65" width="490" height="500" as="geometry"/>
+        </mxCell>
+        <mxCell id="igw" value="Internet Gateway&#xa;Public route: 0.0.0.0/0" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="vpc">
+          <mxGeometry x="75" y="70" width="220" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="web" value="Public Ubuntu EC2&#xa;Nginx serves React frontend&#xa;Express API + PM2 on :3001&#xa;SSH restricted to admin CIDR" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="vpc">
+          <mxGeometry x="95" y="250" width="270" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="nat" value="NAT Gateway + Elastic IP&#xa;Private outbound only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;" vertex="1" parent="vpc">
+          <mxGeometry x="145" y="420" width="220" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="db" value="Private Ubuntu EC2&#xa;MongoDB :27017&#xa;Authorization enabled&#xa;No public IP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;" vertex="1" parent="vpc">
+          <mxGeometry x="700" y="250" width="260" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="dbnote" value="Inbound MongoDB only from web security group&#xa;Private route table default route → NAT Gateway" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="vpc">
+          <mxGeometry x="690" y="420" width="290" height="75" as="geometry"/>
+        </mxCell>
+        <mxCell id="ansible" value="Ansible uses SSH to the public web host, then ProxyJump to the private database host" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=12;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="20" y="320" width="280" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="AWS APIs: provision network, IAM, EC2" style="endArrow=block;html=1;rounded=0;strokeWidth=2;dashed=1;" edge="1" parent="1" source="client" target="vpc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="SSH / Ansible" style="endArrow=block;html=1;rounded=0;strokeWidth=2;dashed=1;" edge="1" parent="1" source="client" target="web">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="HTTP :80" style="endArrow=block;html=1;rounded=0;strokeWidth=2;" edge="1" parent="1" source="browser" target="igw">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="HTTP :80 / SSH :22" style="endArrow=block;html=1;rounded=0;strokeWidth=2;" edge="1" parent="1" source="igw" target="web">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="MongoDB protocol :27017&#xa;VPC private traffic" style="endArrow=block;html=1;rounded=0;strokeWidth=2;" edge="1" parent="1" source="web" target="db">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="Package updates / outbound access" style="endArrow=block;html=1;rounded=0;strokeWidth=2;dashed=1;" edge="1" parent="1" source="db" target="nat">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,12 @@
+---
+app_repo_url: "https://github.com/UnpredictablePrashant/TravelMemory.git"
+app_repo_version: "main"
+app_install_dir: "/opt/travelmemory"
+app_public_url: "http://REPLACE_WITH_WEB_PUBLIC_IP"
+app_port: 3001
+node_major_version: "22"
+mongo_version: "8.0"
+mongo_database_name: "travelmemory"
+mongo_admin_username: "travelmemory-admin"
+mongo_app_username: "travelmemory-app"
+mongo_private_ip: "{{ hostvars[groups['database'][0]].ansible_host }}"
